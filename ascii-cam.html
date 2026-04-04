@@ -118,9 +118,9 @@
     width: 100%;
     height: 100%;
     object-fit: fill; /* ASCIIと同じ縦横比に引き伸ばして完全一致 */
-    opacity: 0;
+    opacity: 0.9;
     transform: scaleX(-1); /* 鏡像をASCIIに合わせる */
-    mix-blend-mode: screen;
+    mix-blend-mode: hard-light;
     pointer-events: none;
     transition: opacity 0.1s;
   }
@@ -217,11 +217,11 @@
 <footer>
   <button id="start-btn">▶ START</button>
   <button id="invert-btn">INVERT</button>
-  <button id="blend-btn">SCREEN</button>
-  <label>RES <input type="range" id="res-slider" min="60" max="200" value="120" step="10"></label>
-  <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.2" step="0.1"></label>
-  <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="0" step="0.01"></label>
-  <span id="overlay-pct">0%</span>
+  <button id="blend-btn" class="active">HARD-LIGHT</button>
+  <label>RES <input type="range" id="res-slider" min="60" max="200" value="200" step="10"></label>
+  <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.75" step="0.1"></label>
+  <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="0.9" step="0.01"></label>
+  <span id="overlay-pct">90%</span>
 </footer>
 
 <script>
@@ -229,13 +229,13 @@ const CHARSET_DENSE  = '$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~
 
 let running = false;
 let inverted = false;
-let cols = 120;
-let contrastVal = 1.2;
-let overlayOpacity = 0;
+let cols = 200;
+let contrastVal = 1.75;
+let overlayOpacity = 0.9;
 
 // blend modes to cycle through
 const BLEND_MODES = ['screen', 'lighten', 'hard-light', 'overlay', 'normal'];
-let blendIndex = 0;
+let blendIndex = 2;
 
 const video        = document.getElementById('video');
 const videoOverlay = document.getElementById('video-overlay');
