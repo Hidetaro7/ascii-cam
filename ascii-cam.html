@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>ASCII CAM</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --fg: #c8ff00;
+    --dim: #3a4a00;
+    --ui: #1a1a1a;
+    --border: #2a2a2a;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Share Tech Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  /* CRT scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      rgba(0,0,0,0.18) 2px,
+      rgba(0,0,0,0.18) 4px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    z-index: 10;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--dim);
+  }
+
+  header .logo {
+    color: var(--fg);
+    font-size: 14px;
+    letter-spacing: 0.3em;
+  }
+
+  #status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #444;
+    transition: background 0.3s;
+  }
+  #dot.live { background: var(--fg); box-shadow: 0 0 6px var(--fg); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:0.4 } }
+
+  main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding-top: 60px;
+    padding-bottom: 70px;
+    width: 100%;
+  }
+
+  /* Stacking layer */
+  #stage {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  #ascii-output {
+    line-height: 1.15;
+    letter-spacing: 0.07em;
+    font-size: 7.2px;
+    color: var(--fg);
+    white-space: pre;
+    text-shadow: 0 0 4px rgba(200,255,0,0.35);
+    padding: 0;
+    background: rgba(0,0,0,0.6);
+    display: block;
+    user-select: none;
+  }
+
+  #video-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: fill; /* ASCIIと同じ縦横比に引き伸ばして完全一致 */
+    opacity: 0;
+    transform: scaleX(-1); /* 鏡像をASCIIに合わせる */
+    mix-blend-mode: screen;
+    pointer-events: none;
+    transition: opacity 0.1s;
+  }
+
+  /* hidden processing elements */
+  #video, #canvas { display: none; }
+
+  footer {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    z-index: 10;
+  }
+
+  button {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    padding: 7px 18px;
+    border: 1px solid var(--border);
+    background: var(--ui);
+    color: var(--dim);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-transform: uppercase;
+  }
+  button:hover { border-color: var(--fg); color: var(--fg); background: rgba(200,255,0,0.06); }
+  button.active { border-color: var(--fg); color: var(--fg); background: rgba(200,255,0,0.1); }
+
+  label {
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 80px;
+    height: 3px;
+    background: var(--border);
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--fg);
+    box-shadow: 0 0 4px var(--fg);
+  }
+
+  #start-btn {
+    border-color: var(--fg);
+    color: var(--fg);
+    background: rgba(200,255,0,0.08);
+    font-size: 13px;
+    padding: 10px 32px;
+  }
+  #start-btn:hover { background: rgba(200,255,0,0.15); }
+
+  /* overlay opacity label highlight */
+  label.overlay-label { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">ASCII CAM</span>
+  <div id="status">
+    <div id="dot"></div>
+    <span id="status-text">STANDBY</span>
+  </div>
+  <span id="fps-display">-- FPS</span>
+</header>
+
+<main>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+  <div id="stage">
+    <div id="ascii-output">[ PRESS START TO INITIALIZE CAMERA ]</div>
+    <video id="video-overlay" autoplay playsinline muted></video>
+  </div>
+</main>
+
+<footer>
+  <button id="start-btn">▶ START</button>
+  <button id="invert-btn">INVERT</button>
+  <button id="blend-btn">SCREEN</button>
+  <label>RES <input type="range" id="res-slider" min="60" max="200" value="120" step="10"></label>
+  <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.2" step="0.1"></label>
+  <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="0" step="0.01"></label>
+  <span id="overlay-pct">0%</span>
+</footer>
+
+<script>
+const CHARSET_DENSE  = '$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,"^`\'. ';
+
+let running = false;
+let inverted = false;
+let cols = 120;
+let contrastVal = 1.2;
+let overlayOpacity = 0;
+
+// blend modes to cycle through
+const BLEND_MODES = ['screen', 'lighten', 'hard-light', 'overlay', 'normal'];
+let blendIndex = 0;
+
+const video        = document.getElementById('video');
+const videoOverlay = document.getElementById('video-overlay');
+const canvas       = document.getElementById('canvas');
+const output       = document.getElementById('ascii-output');
+const dot          = document.getElementById('dot');
+const statusTx     = document.getElementById('status-text');
+const fpsDsp       = document.getElementById('fps-display');
+const overlayPct   = document.getElementById('overlay-pct');
+const ctx          = canvas.getContext('2d', { willReadFrequently: true });
+
+document.getElementById('start-btn').addEventListener('click', toggleCamera);
+
+document.getElementById('invert-btn').addEventListener('click', () => {
+  inverted = !inverted;
+  document.getElementById('invert-btn').classList.toggle('active', inverted);
+});
+
+document.getElementById('blend-btn').addEventListener('click', () => {
+  blendIndex = (blendIndex + 1) % BLEND_MODES.length;
+  const mode = BLEND_MODES[blendIndex];
+  videoOverlay.style.mixBlendMode = mode;
+  document.getElementById('blend-btn').textContent = mode.toUpperCase();
+  document.getElementById('blend-btn').classList.toggle('active', mode !== 'normal');
+});
+
+document.getElementById('res-slider').addEventListener('input', e => {
+  cols = parseInt(e.target.value);
+});
+
+document.getElementById('contrast-slider').addEventListener('input', e => {
+  contrastVal = parseFloat(e.target.value);
+});
+
+document.getElementById('overlay-slider').addEventListener('input', e => {
+  overlayOpacity = parseFloat(e.target.value);
+  videoOverlay.style.opacity = overlayOpacity;
+  overlayPct.textContent = Math.round(overlayOpacity * 100) + '%';
+});
+
+async function toggleCamera() {
+  if (running) {
+    running = false;
+    [video, videoOverlay].forEach(v => {
+      v.srcObject?.getTracks().forEach(t => t.stop());
+      v.srcObject = null;
+    });
+    dot.className = '';
+    statusTx.textContent = 'STANDBY';
+    document.getElementById('start-btn').textContent = '▶ START';
+    output.textContent = '[ CAMERA STOPPED ]';
+    output.style.color = 'var(--dim)';
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    // 処理用とオーバーレイ用に同じストリームをセット
+    video.srcObject = stream;
+    videoOverlay.srcObject = stream;
+    await Promise.all([video.play(), videoOverlay.play()]);
+    running = true;
+    dot.className = 'live';
+    statusTx.textContent = 'LIVE';
+    output.style.color = 'var(--fg)';
+    document.getElementById('start-btn').textContent = '■ STOP';
+    requestAnimationFrame(renderLoop);
+  } catch(err) {
+    output.textContent = `[ CAMERA ERROR: ${err.message} ]`;
+    statusTx.textContent = 'ERROR';
+  }
+}
+
+let lastTime = 0;
+let frameCount = 0;
+
+function renderLoop(ts) {
+  if (!running) return;
+
+  frameCount++;
+  if (ts - lastTime > 1000) {
+    fpsDsp.textContent = `${Math.round(frameCount * 1000 / (ts - lastTime))} FPS`;
+    frameCount = 0;
+    lastTime = ts;
+  }
+
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) { requestAnimationFrame(renderLoop); return; }
+
+  const COLS = cols;
+  const aspect = 0.48;
+  const ROWS = Math.floor(COLS * (vh / vw) * aspect);
+
+  canvas.width  = COLS;
+  canvas.height = ROWS;
+
+  ctx.save();
+  ctx.translate(COLS, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, COLS, ROWS);
+  ctx.restore();
+
+  const imgData = ctx.getImageData(0, 0, COLS, ROWS).data;
+  const charset = CHARSET_DENSE;
+  const clen = charset.length - 1;
+
+  let lines = [];
+  for (let row = 0; row < ROWS; row++) {
+    let line = '';
+    for (let col = 0; col < COLS; col++) {
+      const i = (row * COLS + col) * 4;
+      let r = imgData[i], g = imgData[i+1], b = imgData[i+2];
+      let lum = 0.299*r + 0.587*g + 0.114*b;
+      lum = ((lum / 255 - 0.5) * contrastVal + 0.5) * 255;
+      lum = Math.max(0, Math.min(255, lum));
+      let idx = Math.floor((lum / 255) * clen);
+      if (!inverted) idx = clen - idx;
+      line += charset[idx];
+    }
+    lines.push(line);
+  }
+
+  output.textContent = lines.join('\n');
+  requestAnimationFrame(renderLoop);
+}
+</script>
+</body>
+</html>
