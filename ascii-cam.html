@@ -112,15 +112,25 @@
     user-select: none;
   }
 
-  #video-overlay {
+  #motion-overlay {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  #video-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
     object-fit: fill; /* ASCIIと同じ縦横比に引き伸ばして完全一致 */
-    opacity: 0;
+    opacity: 0.9;
     transform: scaleX(-1); /* 鏡像をASCIIに合わせる */
-    mix-blend-mode: screen;
+    mix-blend-mode: hard-light;
     pointer-events: none;
     transition: opacity 0.1s;
   }
@@ -210,6 +220,7 @@
   <canvas id="canvas"></canvas>
   <div id="stage">
     <div id="ascii-output">[ PRESS START TO INITIALIZE CAMERA ]</div>
+    <canvas id="motion-overlay"></canvas>
     <video id="video-overlay" autoplay playsinline muted></video>
   </div>
 </main>
@@ -217,11 +228,11 @@
 <footer>
   <button id="start-btn">▶ START</button>
   <button id="invert-btn">INVERT</button>
-  <button id="blend-btn">SCREEN</button>
-  <label>RES <input type="range" id="res-slider" min="60" max="200" value="120" step="10"></label>
-  <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.2" step="0.1"></label>
-  <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="0" step="0.01"></label>
-  <span id="overlay-pct">0%</span>
+  <button id="blend-btn" class="active">HARD-LIGHT</button>
+  <label>RES <input type="range" id="res-slider" min="60" max="200" value="200" step="10"></label>
+  <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.75" step="0.1"></label>
+  <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="0.9" step="0.01"></label>
+  <span id="overlay-pct">90%</span>
 </footer>
 
 <script>
@@ -229,13 +240,26 @@ const CHARSET_DENSE  = '$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~
 
 let running = false;
 let inverted = false;
-let cols = 120;
-let contrastVal = 1.2;
-let overlayOpacity = 0;
+let cols = 200;
+let contrastVal = 1.75;
+let overlayOpacity = 0.9;
 
 // blend modes to cycle through
 const BLEND_MODES = ['screen', 'lighten', 'hard-light', 'overlay', 'normal'];
-let blendIndex = 0;
+let blendIndex = 2;
+
+// Motion detection config
+const GRID_COLS = 16;
+const GRID_ROWS = 12;
+const MOTION_THRESHOLD = 20;
+const MARKER_LINGER_MS = 3000;
+const MATCH_DIST = 0.15; // normalized coord distance for matching
+
+const prevBlockLum = new Float32Array(GRID_COLS * GRID_ROWS);
+const gridActive   = new Uint8Array(GRID_COLS * GRID_ROWS);
+const gridDiff     = new Float32Array(GRID_COLS * GRID_ROWS);
+let motionInitialized = false;
+let trackedMarkers = []; // {x, y, diff, cells, lastSeen}
 
 const video        = document.getElementById('video');
 const videoOverlay = document.getElementById('video-overlay');
@@ -246,6 +270,8 @@ const statusTx     = document.getElementById('status-text');
 const fpsDsp       = document.getElementById('fps-display');
 const overlayPct   = document.getElementById('overlay-pct');
 const ctx          = canvas.getContext('2d', { willReadFrequently: true });
+const motionCanvas = document.getElementById('motion-overlay');
+const motionCtx    = motionCanvas.getContext('2d');
 
 document.getElementById('start-btn').addEventListener('click', toggleCamera);
 
@@ -288,6 +314,12 @@ async function toggleCamera() {
     document.getElementById('start-btn').textContent = '▶ START';
     output.textContent = '[ CAMERA STOPPED ]';
     output.style.color = 'var(--dim)';
+    motionInitialized = false;
+    gridActive.fill(0);
+    gridDiff.fill(0);
+    prevBlockLum.fill(0);
+    trackedMarkers = [];
+    motionCtx.clearRect(0, 0, motionCanvas.width, motionCanvas.height);
     return;
   }
 
@@ -363,7 +395,187 @@ function renderLoop(ts) {
   }
 
   output.textContent = lines.join('\n');
+
+  // Motion detection & markers
+  const stageEl = document.getElementById('stage');
+  motionCanvas.width  = stageEl.clientWidth;
+  motionCanvas.height = stageEl.clientHeight;
+  detectMotion(imgData, COLS, ROWS);
+  updateTrackedMarkers(ts);
+  drawMotionMarkers();
+
   requestAnimationFrame(renderLoop);
+}
+
+function detectMotion(imgData, frameCols, frameRows) {
+  const bw = frameCols / GRID_COLS;
+  const bh = frameRows / GRID_ROWS;
+  gridActive.fill(0);
+
+  for (let gy = 0; gy < GRID_ROWS; gy++) {
+    for (let gx = 0; gx < GRID_COLS; gx++) {
+      let sum = 0, count = 0;
+      const x0 = Math.floor(gx * bw);
+      const y0 = Math.floor(gy * bh);
+      const x1 = Math.floor((gx + 1) * bw);
+      const y1 = Math.floor((gy + 1) * bh);
+
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const i = (y * frameCols + x) * 4;
+          sum += 0.299 * imgData[i] + 0.587 * imgData[i+1] + 0.114 * imgData[i+2];
+          count++;
+        }
+      }
+
+      const avg = count > 0 ? sum / count : 0;
+      const idx = gy * GRID_COLS + gx;
+
+      if (motionInitialized) {
+        const diff = Math.abs(avg - prevBlockLum[idx]);
+        gridDiff[idx] = diff;
+        if (diff > MOTION_THRESHOLD) {
+          gridActive[idx] = 1;
+        }
+      }
+
+      prevBlockLum[idx] = avg;
+    }
+  }
+  motionInitialized = true;
+}
+
+function findClusters() {
+  const visited = new Uint8Array(GRID_COLS * GRID_ROWS);
+  const clusters = [];
+
+  for (let gy = 0; gy < GRID_ROWS; gy++) {
+    for (let gx = 0; gx < GRID_COLS; gx++) {
+      const idx = gy * GRID_COLS + gx;
+      if (!gridActive[idx] || visited[idx]) continue;
+
+      const queue = [{gx, gy}];
+      visited[idx] = 1;
+      let sumX = 0, sumY = 0, sumDiff = 0, count = 0;
+
+      while (queue.length > 0) {
+        const {gx: cx, gy: cy} = queue.shift();
+        sumX += cx; sumY += cy;
+        sumDiff += gridDiff[cy * GRID_COLS + cx];
+        count++;
+
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || nx >= GRID_COLS || ny < 0 || ny >= GRID_ROWS) continue;
+          const ni = ny * GRID_COLS + nx;
+          if (!gridActive[ni] || visited[ni]) continue;
+          visited[ni] = 1;
+          queue.push({gx: nx, gy: ny});
+        }
+      }
+
+      clusters.push({
+        x: (sumX / count + 0.5) / GRID_COLS,
+        y: (sumY / count + 0.5) / GRID_ROWS,
+        diff: sumDiff / count,
+        cells: count
+      });
+    }
+  }
+  return clusters;
+}
+
+function updateTrackedMarkers(ts) {
+  const clusters = findClusters();
+  const used = new Uint8Array(clusters.length);
+
+  // Match existing markers to nearest cluster
+  for (const m of trackedMarkers) {
+    let bestIdx = -1, bestDist = MATCH_DIST;
+    for (let i = 0; i < clusters.length; i++) {
+      if (used[i]) continue;
+      const dx = m.x - clusters[i].x;
+      const dy = m.y - clusters[i].y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    if (bestIdx >= 0) {
+      const c = clusters[bestIdx];
+      m.x = c.x; m.y = c.y;
+      m.diff = c.diff; m.cells = c.cells;
+      m.lastSeen = ts;
+      used[bestIdx] = 1;
+    } else {
+      // Soft tracking: follow highest diff cell in neighborhood
+      const gx = Math.floor(m.x * GRID_COLS);
+      const gy = Math.floor(m.y * GRID_ROWS);
+      const r = 2; // search radius in grid cells
+      let bestDiff = 0, bx = gx, by = gy;
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const nx = gx + dx, ny = gy + dy;
+          if (nx < 0 || nx >= GRID_COLS || ny < 0 || ny >= GRID_ROWS) continue;
+          const d = gridDiff[ny * GRID_COLS + nx];
+          if (d > bestDiff) { bestDiff = d; bx = nx; by = ny; }
+        }
+      }
+      if (bestDiff > 0) {
+        m.x = (bx + 0.5) / GRID_COLS;
+        m.y = (by + 0.5) / GRID_ROWS;
+        m.diff = bestDiff;
+      }
+    }
+  }
+
+  // Create new markers for unmatched clusters
+  for (let i = 0; i < clusters.length; i++) {
+    if (used[i]) continue;
+    const c = clusters[i];
+    trackedMarkers.push({ x: c.x, y: c.y, diff: c.diff, cells: c.cells, lastSeen: ts });
+  }
+
+  // Remove expired markers
+  trackedMarkers = trackedMarkers.filter(m => ts - m.lastSeen <= MARKER_LINGER_MS);
+}
+
+function drawMotionMarkers() {
+  const w = motionCanvas.width;
+  const h = motionCanvas.height;
+  motionCtx.clearRect(0, 0, w, h);
+
+  if (trackedMarkers.length === 0) return;
+
+  const pts = trackedMarkers.map(m => ({ px: m.x * w, py: m.y * h, diff: m.diff, cells: m.cells }));
+
+  // Connecting lines
+  motionCtx.strokeStyle = '#fff';
+  motionCtx.lineWidth = 1;
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      motionCtx.beginPath();
+      motionCtx.moveTo(pts[i].px, pts[i].py);
+      motionCtx.lineTo(pts[j].px, pts[j].py);
+      motionCtx.stroke();
+    }
+  }
+
+  // Square markers
+  const markerSize = Math.max(3, w / GRID_COLS * 0.075);
+  const half = markerSize / 2;
+  motionCtx.lineWidth = 1.5;
+  for (const p of pts) {
+    motionCtx.strokeRect(p.px - half, p.py - half, markerSize, markerSize);
+  }
+
+  // Data labels
+  const fontSize = 16;
+  motionCtx.font = `${fontSize}px 'Share Tech Mono', monospace`;
+  motionCtx.fillStyle = '#fff';
+  motionCtx.textBaseline = 'top';
+  for (const p of pts) {
+    const val = (p.diff * p.cells + p.px * 0.1 + p.py * 0.07) % 1000;
+    motionCtx.fillText(val.toFixed(1), p.px + half + 3, p.py - half);
+  }
 }
 </script>
 </body>
