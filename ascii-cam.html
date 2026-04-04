@@ -252,10 +252,14 @@ let blendIndex = 2;
 const GRID_COLS = 16;
 const GRID_ROWS = 12;
 const MOTION_THRESHOLD = 20;
+const MARKER_LINGER_MS = 3000;
+const MATCH_DIST = 0.15; // normalized coord distance for matching
 
 const prevBlockLum = new Float32Array(GRID_COLS * GRID_ROWS);
 const gridActive   = new Uint8Array(GRID_COLS * GRID_ROWS);
+const gridDiff     = new Float32Array(GRID_COLS * GRID_ROWS);
 let motionInitialized = false;
+let trackedMarkers = []; // {x, y, diff, cells, lastSeen}
 
 const video        = document.getElementById('video');
 const videoOverlay = document.getElementById('video-overlay');
@@ -312,7 +316,9 @@ async function toggleCamera() {
     output.style.color = 'var(--dim)';
     motionInitialized = false;
     gridActive.fill(0);
+    gridDiff.fill(0);
     prevBlockLum.fill(0);
+    trackedMarkers = [];
     motionCtx.clearRect(0, 0, motionCanvas.width, motionCanvas.height);
     return;
   }
@@ -395,6 +401,7 @@ function renderLoop(ts) {
   motionCanvas.width  = stageEl.clientWidth;
   motionCanvas.height = stageEl.clientHeight;
   detectMotion(imgData, COLS, ROWS);
+  updateTrackedMarkers(ts);
   drawMotionMarkers();
 
   requestAnimationFrame(renderLoop);
@@ -425,7 +432,9 @@ function detectMotion(imgData, frameCols, frameRows) {
       const idx = gy * GRID_COLS + gx;
 
       if (motionInitialized) {
-        if (Math.abs(avg - prevBlockLum[idx]) > MOTION_THRESHOLD) {
+        const diff = Math.abs(avg - prevBlockLum[idx]);
+        gridDiff[idx] = diff;
+        if (diff > MOTION_THRESHOLD) {
           gridActive[idx] = 1;
         }
       }
@@ -447,11 +456,13 @@ function findClusters() {
 
       const queue = [{gx, gy}];
       visited[idx] = 1;
-      let sumX = 0, sumY = 0, count = 0;
+      let sumX = 0, sumY = 0, sumDiff = 0, count = 0;
 
       while (queue.length > 0) {
         const {gx: cx, gy: cy} = queue.shift();
-        sumX += cx; sumY += cy; count++;
+        sumX += cx; sumY += cy;
+        sumDiff += gridDiff[cy * GRID_COLS + cx];
+        count++;
 
         for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
           const nx = cx + dx, ny = cy + dy;
@@ -465,11 +476,66 @@ function findClusters() {
 
       clusters.push({
         x: (sumX / count + 0.5) / GRID_COLS,
-        y: (sumY / count + 0.5) / GRID_ROWS
+        y: (sumY / count + 0.5) / GRID_ROWS,
+        diff: sumDiff / count,
+        cells: count
       });
     }
   }
   return clusters;
+}
+
+function updateTrackedMarkers(ts) {
+  const clusters = findClusters();
+  const used = new Uint8Array(clusters.length);
+
+  // Match existing markers to nearest cluster
+  for (const m of trackedMarkers) {
+    let bestIdx = -1, bestDist = MATCH_DIST;
+    for (let i = 0; i < clusters.length; i++) {
+      if (used[i]) continue;
+      const dx = m.x - clusters[i].x;
+      const dy = m.y - clusters[i].y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    if (bestIdx >= 0) {
+      const c = clusters[bestIdx];
+      m.x = c.x; m.y = c.y;
+      m.diff = c.diff; m.cells = c.cells;
+      m.lastSeen = ts;
+      used[bestIdx] = 1;
+    } else {
+      // Soft tracking: follow highest diff cell in neighborhood
+      const gx = Math.floor(m.x * GRID_COLS);
+      const gy = Math.floor(m.y * GRID_ROWS);
+      const r = 2; // search radius in grid cells
+      let bestDiff = 0, bx = gx, by = gy;
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const nx = gx + dx, ny = gy + dy;
+          if (nx < 0 || nx >= GRID_COLS || ny < 0 || ny >= GRID_ROWS) continue;
+          const d = gridDiff[ny * GRID_COLS + nx];
+          if (d > bestDiff) { bestDiff = d; bx = nx; by = ny; }
+        }
+      }
+      if (bestDiff > 0) {
+        m.x = (bx + 0.5) / GRID_COLS;
+        m.y = (by + 0.5) / GRID_ROWS;
+        m.diff = bestDiff;
+      }
+    }
+  }
+
+  // Create new markers for unmatched clusters
+  for (let i = 0; i < clusters.length; i++) {
+    if (used[i]) continue;
+    const c = clusters[i];
+    trackedMarkers.push({ x: c.x, y: c.y, diff: c.diff, cells: c.cells, lastSeen: ts });
+  }
+
+  // Remove expired markers
+  trackedMarkers = trackedMarkers.filter(m => ts - m.lastSeen <= MARKER_LINGER_MS);
 }
 
 function drawMotionMarkers() {
@@ -477,19 +543,18 @@ function drawMotionMarkers() {
   const h = motionCanvas.height;
   motionCtx.clearRect(0, 0, w, h);
 
-  const clusters = findClusters();
-  if (clusters.length === 0) return;
+  if (trackedMarkers.length === 0) return;
 
-  const markers = clusters.map(c => ({ x: c.x * w, y: c.y * h }));
+  const pts = trackedMarkers.map(m => ({ px: m.x * w, py: m.y * h, diff: m.diff, cells: m.cells }));
 
   // Connecting lines
   motionCtx.strokeStyle = '#fff';
   motionCtx.lineWidth = 1;
-  for (let i = 0; i < markers.length; i++) {
-    for (let j = i + 1; j < markers.length; j++) {
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
       motionCtx.beginPath();
-      motionCtx.moveTo(markers[i].x, markers[i].y);
-      motionCtx.lineTo(markers[j].x, markers[j].y);
+      motionCtx.moveTo(pts[i].px, pts[i].py);
+      motionCtx.lineTo(pts[j].px, pts[j].py);
       motionCtx.stroke();
     }
   }
@@ -498,8 +563,18 @@ function drawMotionMarkers() {
   const markerSize = Math.max(3, w / GRID_COLS * 0.075);
   const half = markerSize / 2;
   motionCtx.lineWidth = 1.5;
-  for (const m of markers) {
-    motionCtx.strokeRect(m.x - half, m.y - half, markerSize, markerSize);
+  for (const p of pts) {
+    motionCtx.strokeRect(p.px - half, p.py - half, markerSize, markerSize);
+  }
+
+  // Data labels
+  const fontSize = Math.max(7, w / 120);
+  motionCtx.font = `${fontSize}px 'Share Tech Mono', monospace`;
+  motionCtx.fillStyle = '#fff';
+  motionCtx.textBaseline = 'top';
+  for (const p of pts) {
+    const val = (p.diff * p.cells + p.px * 0.1 + p.py * 0.07) % 1000;
+    motionCtx.fillText(val.toFixed(1), p.px + half + 3, p.py - half);
   }
 }
 </script>
