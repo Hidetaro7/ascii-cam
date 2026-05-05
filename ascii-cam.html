@@ -203,6 +203,9 @@
 
   /* overlay opacity label highlight */
   label.overlay-label { color: var(--fg); }
+
+  #meta-display { display: inline-flex; align-items: center; gap: 6px; }
+  #meta-display .sep { opacity: 0.5; }
 </style>
 </head>
 <body>
@@ -213,7 +216,11 @@
     <div id="dot"></div>
     <span id="status-text">STANDBY</span>
   </div>
-  <span id="fps-display">-- FPS</span>
+  <span id="meta-display">
+    <span id="res-display">--</span>
+    <span class="sep">·</span>
+    <span id="fps-display">-- FPS</span>
+  </span>
 </header>
 
 <main>
@@ -330,6 +337,7 @@ async function toggleCamera() {
     dot.className = '';
     statusTx.textContent = 'STANDBY';
     document.getElementById('start-btn').textContent = '▶ START';
+    document.getElementById('res-display').textContent = '--';
     output.textContent = '[ CAMERA STOPPED ]';
     output.style.color = 'var(--dim)';
     motionInitialized = false;
@@ -346,13 +354,23 @@ async function toggleCamera() {
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      video: {
+        facingMode: 'user',
+        width:  { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 }
+      },
       audio: false
     });
     // 処理用とオーバーレイ用に同じストリームをセット
     video.srcObject = stream;
     videoOverlay.srcObject = stream;
     await Promise.all([video.play(), videoOverlay.play()]);
+    // 実解像度の表示
+    const track = stream.getVideoTracks()[0];
+    const settings = track.getSettings();
+    console.log('Camera negotiated:', settings);
+    document.getElementById('res-display').textContent = `${settings.width}×${settings.height}`;
     running = true;
     dot.className = 'live';
     statusTx.textContent = 'LIVE';
