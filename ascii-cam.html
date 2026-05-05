@@ -245,101 +245,129 @@
 </footer>
 
 <script>
+// Static config
 const CHARSET_DENSE  = '$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,"^`\'. ';
-
-let running = false;
-let inverted = false;
-let cols = 90;
-let contrastVal = 1.75;
-let overlayOpacity = 1;
-
-// blend modes to cycle through
 const BLEND_MODES = ['screen', 'lighten', 'hard-light', 'overlay', 'normal'];
-let blendIndex = 4;
 
-// Motion detection config
+// Motion detection config (markers)
 const GRID_COLS = 16;
 const GRID_ROWS = 12;
 const MOTION_THRESHOLD = 20;
-const SOFT_TRACK_THRESHOLD = 10; // min diff to allow soft tracking
-const ACTIVE_LINK_MS = 250;       // markers updated within this window can connect
+const SOFT_TRACK_THRESHOLD = 10;
+const ACTIVE_LINK_MS = 250;
 const MARKER_LINGER_MS = 3000;
-const MATCH_DIST = 0.15; // normalized coord distance for matching
+const MATCH_DIST = 0.15;
 
+// Motion-only ASCII config
+const PIXEL_MOTION_THRESHOLD = 25;
+const ASCII_LINGER_MS = 400;
+
+// User-facing settings (a single source of truth — savable / presetable)
+const state = {
+  running: false,
+  inverted: false,
+  cols: 90,
+  contrast: 1.75,
+  overlayOpacity: 1,
+  blendIndex: 4,   // index into BLEND_MODES; default = 'normal'
+  motionOnly: true,
+};
+
+// DOM references (collected in one place)
+const els = {
+  video:          document.getElementById('video'),
+  videoOverlay:   document.getElementById('video-overlay'),
+  canvas:         document.getElementById('canvas'),
+  output:         document.getElementById('ascii-output'),
+  motionCanvas:   document.getElementById('motion-overlay'),
+  stage:          document.getElementById('stage'),
+  dot:            document.getElementById('dot'),
+  statusTx:       document.getElementById('status-text'),
+  resDisp:        document.getElementById('res-display'),
+  fpsDsp:         document.getElementById('fps-display'),
+  overlayPct:     document.getElementById('overlay-pct'),
+  startBtn:       document.getElementById('start-btn'),
+  invertBtn:      document.getElementById('invert-btn'),
+  motionOnlyBtn:  document.getElementById('motion-only-btn'),
+  blendBtn:       document.getElementById('blend-btn'),
+  resSlider:      document.getElementById('res-slider'),
+  contrastSlider: document.getElementById('contrast-slider'),
+  overlaySlider:  document.getElementById('overlay-slider'),
+};
+
+const ctx       = els.canvas.getContext('2d', { willReadFrequently: true });
+const motionCtx = els.motionCanvas.getContext('2d');
+
+// Runtime motion buffers (not user-facing settings)
 const prevBlockLum = new Float32Array(GRID_COLS * GRID_ROWS);
 const gridActive   = new Uint8Array(GRID_COLS * GRID_ROWS);
 const gridDiff     = new Float32Array(GRID_COLS * GRID_ROWS);
 let motionInitialized = false;
-let trackedMarkers = []; // {x, y, diff, cells, lastSeen}
-
-// Motion-only ASCII mode
-const PIXEL_MOTION_THRESHOLD = 25;
-const ASCII_LINGER_MS = 400;
-let motionOnlyMode = true;
+let trackedMarkers = []; // {x, y, diff, cells, lastSeen, lastActive}
 let prevPixelLum = null;
 let pixelLastMove = null;
 let pixelArraySize = 0;
 let pixelMotionInitialized = false;
 
-const video        = document.getElementById('video');
-const videoOverlay = document.getElementById('video-overlay');
-const canvas       = document.getElementById('canvas');
-const output       = document.getElementById('ascii-output');
-const dot          = document.getElementById('dot');
-const statusTx     = document.getElementById('status-text');
-const fpsDsp       = document.getElementById('fps-display');
-const overlayPct   = document.getElementById('overlay-pct');
-const ctx          = canvas.getContext('2d', { willReadFrequently: true });
-const motionCanvas = document.getElementById('motion-overlay');
-const motionCtx    = motionCanvas.getContext('2d');
+// Push current state to all UI surfaces. Single function for both
+// user interactions and programmatic changes (e.g. presets).
+function applyState() {
+  els.invertBtn.classList.toggle('active', state.inverted);
+  els.motionOnlyBtn.classList.toggle('active', state.motionOnly);
+  const blend = BLEND_MODES[state.blendIndex];
+  els.blendBtn.textContent = blend.toUpperCase();
+  els.blendBtn.classList.toggle('active', blend !== 'normal');
+  els.output.style.mixBlendMode = blend;
+  els.videoOverlay.style.opacity = state.overlayOpacity;
+  els.overlayPct.textContent = Math.round(state.overlayOpacity * 100) + '%';
+  els.resSlider.value = state.cols;
+  els.contrastSlider.value = state.contrast;
+  els.overlaySlider.value = state.overlayOpacity;
+}
 
-document.getElementById('start-btn').addEventListener('click', toggleCamera);
+els.startBtn.addEventListener('click', toggleCamera);
 
-document.getElementById('invert-btn').addEventListener('click', () => {
-  inverted = !inverted;
-  document.getElementById('invert-btn').classList.toggle('active', inverted);
+els.invertBtn.addEventListener('click', () => {
+  state.inverted = !state.inverted;
+  applyState();
 });
 
-document.getElementById('motion-only-btn').addEventListener('click', () => {
-  motionOnlyMode = !motionOnlyMode;
-  document.getElementById('motion-only-btn').classList.toggle('active', motionOnlyMode);
+els.motionOnlyBtn.addEventListener('click', () => {
+  state.motionOnly = !state.motionOnly;
+  applyState();
 });
 
-document.getElementById('blend-btn').addEventListener('click', () => {
-  blendIndex = (blendIndex + 1) % BLEND_MODES.length;
-  const mode = BLEND_MODES[blendIndex];
-  output.style.mixBlendMode = mode;
-  document.getElementById('blend-btn').textContent = mode.toUpperCase();
-  document.getElementById('blend-btn').classList.toggle('active', mode !== 'normal');
+els.blendBtn.addEventListener('click', () => {
+  state.blendIndex = (state.blendIndex + 1) % BLEND_MODES.length;
+  applyState();
 });
 
-document.getElementById('res-slider').addEventListener('input', e => {
-  cols = parseInt(e.target.value);
+els.resSlider.addEventListener('input', e => {
+  state.cols = parseInt(e.target.value);
 });
 
-document.getElementById('contrast-slider').addEventListener('input', e => {
-  contrastVal = parseFloat(e.target.value);
+els.contrastSlider.addEventListener('input', e => {
+  state.contrast = parseFloat(e.target.value);
 });
 
-document.getElementById('overlay-slider').addEventListener('input', e => {
-  overlayOpacity = parseFloat(e.target.value);
-  videoOverlay.style.opacity = overlayOpacity;
-  overlayPct.textContent = Math.round(overlayOpacity * 100) + '%';
+els.overlaySlider.addEventListener('input', e => {
+  state.overlayOpacity = parseFloat(e.target.value);
+  applyState();
 });
 
 async function toggleCamera() {
-  if (running) {
-    running = false;
-    [video, videoOverlay].forEach(v => {
+  if (state.running) {
+    state.running = false;
+    [els.video, els.videoOverlay].forEach(v => {
       v.srcObject?.getTracks().forEach(t => t.stop());
       v.srcObject = null;
     });
-    dot.className = '';
-    statusTx.textContent = 'STANDBY';
-    document.getElementById('start-btn').textContent = '▶ START';
-    document.getElementById('res-display').textContent = '--';
-    output.textContent = '[ CAMERA STOPPED ]';
-    output.style.color = 'var(--dim)';
+    els.dot.className = '';
+    els.statusTx.textContent = 'STANDBY';
+    els.startBtn.textContent = '▶ START';
+    els.resDisp.textContent = '--';
+    els.output.textContent = '[ CAMERA STOPPED ]';
+    els.output.style.color = 'var(--dim)';
     motionInitialized = false;
     gridActive.fill(0);
     gridDiff.fill(0);
@@ -348,7 +376,7 @@ async function toggleCamera() {
     pixelMotionInitialized = false;
     if (prevPixelLum) prevPixelLum.fill(0);
     if (pixelLastMove) pixelLastMove.fill(0);
-    motionCtx.clearRect(0, 0, motionCanvas.width, motionCanvas.height);
+    motionCtx.clearRect(0, 0, els.motionCanvas.width, els.motionCanvas.height);
     return;
   }
 
@@ -363,23 +391,23 @@ async function toggleCamera() {
       audio: false
     });
     // 処理用とオーバーレイ用に同じストリームをセット
-    video.srcObject = stream;
-    videoOverlay.srcObject = stream;
-    await Promise.all([video.play(), videoOverlay.play()]);
+    els.video.srcObject = stream;
+    els.videoOverlay.srcObject = stream;
+    await Promise.all([els.video.play(), els.videoOverlay.play()]);
     // 実解像度の表示
     const track = stream.getVideoTracks()[0];
     const settings = track.getSettings();
     console.log('Camera negotiated:', settings);
-    document.getElementById('res-display').textContent = `${settings.width}×${settings.height}`;
-    running = true;
-    dot.className = 'live';
-    statusTx.textContent = 'LIVE';
-    output.style.color = 'var(--fg)';
-    document.getElementById('start-btn').textContent = '■ STOP';
+    els.resDisp.textContent = `${settings.width}×${settings.height}`;
+    state.running = true;
+    els.dot.className = 'live';
+    els.statusTx.textContent = 'LIVE';
+    els.output.style.color = 'var(--fg)';
+    els.startBtn.textContent = '■ STOP';
     requestAnimationFrame(renderLoop);
   } catch(err) {
-    output.textContent = `[ CAMERA ERROR: ${err.message} ]`;
-    statusTx.textContent = 'ERROR';
+    els.output.textContent = `[ CAMERA ERROR: ${err.message} ]`;
+    els.statusTx.textContent = 'ERROR';
   }
 }
 
@@ -387,25 +415,25 @@ let lastTime = 0;
 let frameCount = 0;
 
 function renderLoop(ts) {
-  if (!running) return;
+  if (!state.running) return;
 
   frameCount++;
   if (ts - lastTime > 1000) {
-    fpsDsp.textContent = `${Math.round(frameCount * 1000 / (ts - lastTime))} FPS`;
+    els.fpsDsp.textContent = `${Math.round(frameCount * 1000 / (ts - lastTime))} FPS`;
     frameCount = 0;
     lastTime = ts;
   }
 
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
+  const vw = els.video.videoWidth;
+  const vh = els.video.videoHeight;
   if (!vw || !vh) { requestAnimationFrame(renderLoop); return; }
 
-  const COLS = cols;
+  const COLS = state.cols;
   const aspect = 0.55;
   const ROWS = Math.floor(COLS * (vh / vw) * aspect);
 
-  canvas.width  = COLS;
-  canvas.height = ROWS;
+  els.canvas.width  = COLS;
+  els.canvas.height = ROWS;
 
   // Resize per-pixel motion buffers if needed
   const pixCount = COLS * ROWS;
@@ -419,14 +447,14 @@ function renderLoop(ts) {
   ctx.save();
   ctx.translate(COLS, 0);
   ctx.scale(-1, 1);
-  ctx.drawImage(video, 0, 0, COLS, ROWS);
+  ctx.drawImage(els.video, 0, 0, COLS, ROWS);
   ctx.restore();
 
   const imgData = ctx.getImageData(0, 0, COLS, ROWS).data;
   const charset = CHARSET_DENSE;
   const clen = charset.length - 1;
 
-  let lines = [];
+  const lines = [];
   for (let row = 0; row < ROWS; row++) {
     let line = '';
     for (let col = 0; col < COLS; col++) {
@@ -444,12 +472,12 @@ function renderLoop(ts) {
       prevPixelLum[pi] = lum;
 
       // Apply contrast for ASCII mapping
-      let lumC = ((lum / 255 - 0.5) * contrastVal + 0.5) * 255;
+      let lumC = ((lum / 255 - 0.5) * state.contrast + 0.5) * 255;
       lumC = Math.max(0, Math.min(255, lumC));
       let idx = Math.floor((lumC / 255) * clen);
-      if (!inverted) idx = clen - idx;
+      if (!state.inverted) idx = clen - idx;
 
-      if (motionOnlyMode && (ts - pixelLastMove[pi] > ASCII_LINGER_MS)) {
+      if (state.motionOnly && (ts - pixelLastMove[pi] > ASCII_LINGER_MS)) {
         line += ' ';
       } else {
         line += charset[idx];
@@ -459,12 +487,11 @@ function renderLoop(ts) {
   }
   pixelMotionInitialized = true;
 
-  output.textContent = lines.join('\n');
+  els.output.textContent = lines.join('\n');
 
   // Motion detection & markers
-  const stageEl = document.getElementById('stage');
-  motionCanvas.width  = stageEl.clientWidth;
-  motionCanvas.height = stageEl.clientHeight;
+  els.motionCanvas.width  = els.stage.clientWidth;
+  els.motionCanvas.height = els.stage.clientHeight;
   detectMotion(imgData, COLS, ROWS);
   updateTrackedMarkers(ts);
   drawMotionMarkers(ts);
@@ -605,8 +632,8 @@ function updateTrackedMarkers(ts) {
 }
 
 function drawMotionMarkers(ts) {
-  const w = motionCanvas.width;
-  const h = motionCanvas.height;
+  const w = els.motionCanvas.width;
+  const h = els.motionCanvas.height;
   motionCtx.clearRect(0, 0, w, h);
 
   if (trackedMarkers.length === 0) return;
@@ -649,6 +676,9 @@ function drawMotionMarkers(ts) {
     motionCtx.fillText(val.toFixed(1), p.px + half + 3, p.py - half);
   }
 }
+
+// Sync UI to initial state on page load
+applyState();
 </script>
 </body>
 </html>
