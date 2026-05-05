@@ -102,7 +102,7 @@
   #ascii-output {
     line-height: 1.15;
     letter-spacing: 0.07em;
-    font-size: 7.2px;
+    font-size: 16px;
     color: var(--fg);
     white-space: pre;
     text-shadow: 0 0 4px rgba(200,255,0,0.35);
@@ -229,7 +229,7 @@
   <button id="start-btn">▶ START</button>
   <button id="invert-btn">INVERT</button>
   <button id="blend-btn" class="active">HARD-LIGHT</button>
-  <label>RES <input type="range" id="res-slider" min="60" max="200" value="200" step="10"></label>
+  <label>RES <input type="range" id="res-slider" min="40" max="140" value="90" step="5"></label>
   <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.75" step="0.1"></label>
   <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="0.9" step="0.01"></label>
   <span id="overlay-pct">90%</span>
@@ -240,7 +240,7 @@ const CHARSET_DENSE  = '$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~
 
 let running = false;
 let inverted = false;
-let cols = 200;
+let cols = 90;
 let contrastVal = 1.75;
 let overlayOpacity = 0.9;
 
@@ -252,6 +252,8 @@ let blendIndex = 2;
 const GRID_COLS = 16;
 const GRID_ROWS = 12;
 const MOTION_THRESHOLD = 20;
+const SOFT_TRACK_THRESHOLD = 10; // min diff to allow soft tracking
+const ACTIVE_LINK_MS = 250;       // markers updated within this window can connect
 const MARKER_LINGER_MS = 3000;
 const MATCH_DIST = 0.15; // normalized coord distance for matching
 
@@ -362,7 +364,7 @@ function renderLoop(ts) {
   if (!vw || !vh) { requestAnimationFrame(renderLoop); return; }
 
   const COLS = cols;
-  const aspect = 0.48;
+  const aspect = 0.55;
   const ROWS = Math.floor(COLS * (vh / vw) * aspect);
 
   canvas.width  = COLS;
@@ -402,7 +404,7 @@ function renderLoop(ts) {
   motionCanvas.height = stageEl.clientHeight;
   detectMotion(imgData, COLS, ROWS);
   updateTrackedMarkers(ts);
-  drawMotionMarkers();
+  drawMotionMarkers(ts);
 
   requestAnimationFrame(renderLoop);
 }
@@ -504,6 +506,7 @@ function updateTrackedMarkers(ts) {
       m.x = c.x; m.y = c.y;
       m.diff = c.diff; m.cells = c.cells;
       m.lastSeen = ts;
+      m.lastActive = ts;
       used[bestIdx] = 1;
     } else {
       // Soft tracking: follow highest diff cell in neighborhood
@@ -519,7 +522,7 @@ function updateTrackedMarkers(ts) {
           if (d > bestDiff) { bestDiff = d; bx = nx; by = ny; }
         }
       }
-      if (bestDiff > 0) {
+      if (bestDiff >= SOFT_TRACK_THRESHOLD) {
         m.x = (bx + 0.5) / GRID_COLS;
         m.y = (by + 0.5) / GRID_ROWS;
         m.diff = bestDiff;
@@ -531,27 +534,33 @@ function updateTrackedMarkers(ts) {
   for (let i = 0; i < clusters.length; i++) {
     if (used[i]) continue;
     const c = clusters[i];
-    trackedMarkers.push({ x: c.x, y: c.y, diff: c.diff, cells: c.cells, lastSeen: ts });
+    trackedMarkers.push({ x: c.x, y: c.y, diff: c.diff, cells: c.cells, lastSeen: ts, lastActive: ts });
   }
 
   // Remove expired markers
   trackedMarkers = trackedMarkers.filter(m => ts - m.lastSeen <= MARKER_LINGER_MS);
 }
 
-function drawMotionMarkers() {
+function drawMotionMarkers(ts) {
   const w = motionCanvas.width;
   const h = motionCanvas.height;
   motionCtx.clearRect(0, 0, w, h);
 
   if (trackedMarkers.length === 0) return;
 
-  const pts = trackedMarkers.map(m => ({ px: m.x * w, py: m.y * h, diff: m.diff, cells: m.cells }));
+  const pts = trackedMarkers.map(m => ({
+    px: m.x * w, py: m.y * h,
+    diff: m.diff, cells: m.cells,
+    active: ts - m.lastActive <= ACTIVE_LINK_MS
+  }));
 
-  // Connecting lines
+  // Connecting lines: only between currently-active markers
   motionCtx.strokeStyle = '#fff';
   motionCtx.lineWidth = 1;
   for (let i = 0; i < pts.length; i++) {
+    if (!pts[i].active) continue;
     for (let j = i + 1; j < pts.length; j++) {
+      if (!pts[j].active) continue;
       motionCtx.beginPath();
       motionCtx.moveTo(pts[i].px, pts[i].py);
       motionCtx.lineTo(pts[j].px, pts[j].py);
