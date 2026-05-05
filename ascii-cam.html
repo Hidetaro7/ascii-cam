@@ -100,6 +100,8 @@
   }
 
   #ascii-output {
+    position: relative;
+    z-index: 2;
     line-height: 1.15;
     letter-spacing: 0.07em;
     font-size: 16px;
@@ -107,7 +109,7 @@
     white-space: pre;
     text-shadow: 0 0 4px rgba(200,255,0,0.35);
     padding: 0;
-    background: rgba(0,0,0,0.6);
+    mix-blend-mode: normal;
     display: block;
     user-select: none;
   }
@@ -124,13 +126,12 @@
   #video-overlay {
     position: absolute;
     inset: 0;
-    z-index: 2;
+    z-index: 1;
     width: 100%;
     height: 100%;
     object-fit: fill; /* ASCIIと同じ縦横比に引き伸ばして完全一致 */
-    opacity: 0.9;
+    opacity: 1;
     transform: scaleX(-1); /* 鏡像をASCIIに合わせる */
-    mix-blend-mode: hard-light;
     pointer-events: none;
     transition: opacity 0.1s;
   }
@@ -228,11 +229,12 @@
 <footer>
   <button id="start-btn">▶ START</button>
   <button id="invert-btn">INVERT</button>
-  <button id="blend-btn" class="active">HARD-LIGHT</button>
+  <button id="blend-btn">NORMAL</button>
+  <button id="motion-only-btn" class="active">MOTION ONLY</button>
   <label>RES <input type="range" id="res-slider" min="40" max="140" value="90" step="5"></label>
   <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.75" step="0.1"></label>
-  <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="0.9" step="0.01"></label>
-  <span id="overlay-pct">90%</span>
+  <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="1" step="0.01"></label>
+  <span id="overlay-pct">100%</span>
 </footer>
 
 <script>
@@ -242,11 +244,11 @@ let running = false;
 let inverted = false;
 let cols = 90;
 let contrastVal = 1.75;
-let overlayOpacity = 0.9;
+let overlayOpacity = 1;
 
 // blend modes to cycle through
 const BLEND_MODES = ['screen', 'lighten', 'hard-light', 'overlay', 'normal'];
-let blendIndex = 2;
+let blendIndex = 4;
 
 // Motion detection config
 const GRID_COLS = 16;
@@ -262,6 +264,15 @@ const gridActive   = new Uint8Array(GRID_COLS * GRID_ROWS);
 const gridDiff     = new Float32Array(GRID_COLS * GRID_ROWS);
 let motionInitialized = false;
 let trackedMarkers = []; // {x, y, diff, cells, lastSeen}
+
+// Motion-only ASCII mode
+const PIXEL_MOTION_THRESHOLD = 25;
+const ASCII_LINGER_MS = 400;
+let motionOnlyMode = true;
+let prevPixelLum = null;
+let pixelLastMove = null;
+let pixelArraySize = 0;
+let pixelMotionInitialized = false;
 
 const video        = document.getElementById('video');
 const videoOverlay = document.getElementById('video-overlay');
@@ -282,10 +293,15 @@ document.getElementById('invert-btn').addEventListener('click', () => {
   document.getElementById('invert-btn').classList.toggle('active', inverted);
 });
 
+document.getElementById('motion-only-btn').addEventListener('click', () => {
+  motionOnlyMode = !motionOnlyMode;
+  document.getElementById('motion-only-btn').classList.toggle('active', motionOnlyMode);
+});
+
 document.getElementById('blend-btn').addEventListener('click', () => {
   blendIndex = (blendIndex + 1) % BLEND_MODES.length;
   const mode = BLEND_MODES[blendIndex];
-  videoOverlay.style.mixBlendMode = mode;
+  output.style.mixBlendMode = mode;
   document.getElementById('blend-btn').textContent = mode.toUpperCase();
   document.getElementById('blend-btn').classList.toggle('active', mode !== 'normal');
 });
@@ -321,6 +337,9 @@ async function toggleCamera() {
     gridDiff.fill(0);
     prevBlockLum.fill(0);
     trackedMarkers = [];
+    pixelMotionInitialized = false;
+    if (prevPixelLum) prevPixelLum.fill(0);
+    if (pixelLastMove) pixelLastMove.fill(0);
     motionCtx.clearRect(0, 0, motionCanvas.width, motionCanvas.height);
     return;
   }
@@ -370,6 +389,15 @@ function renderLoop(ts) {
   canvas.width  = COLS;
   canvas.height = ROWS;
 
+  // Resize per-pixel motion buffers if needed
+  const pixCount = COLS * ROWS;
+  if (pixCount !== pixelArraySize) {
+    prevPixelLum  = new Float32Array(pixCount);
+    pixelLastMove = new Float64Array(pixCount);
+    pixelArraySize = pixCount;
+    pixelMotionInitialized = false;
+  }
+
   ctx.save();
   ctx.translate(COLS, 0);
   ctx.scale(-1, 1);
@@ -385,16 +413,33 @@ function renderLoop(ts) {
     let line = '';
     for (let col = 0; col < COLS; col++) {
       const i = (row * COLS + col) * 4;
-      let r = imgData[i], g = imgData[i+1], b = imgData[i+2];
-      let lum = 0.299*r + 0.587*g + 0.114*b;
-      lum = ((lum / 255 - 0.5) * contrastVal + 0.5) * 255;
-      lum = Math.max(0, Math.min(255, lum));
-      let idx = Math.floor((lum / 255) * clen);
+      const r = imgData[i], g = imgData[i+1], b = imgData[i+2];
+      const lum = 0.299*r + 0.587*g + 0.114*b;
+
+      // Per-pixel motion tracking (raw luminance, before contrast)
+      const pi = row * COLS + col;
+      if (pixelMotionInitialized) {
+        if (Math.abs(lum - prevPixelLum[pi]) > PIXEL_MOTION_THRESHOLD) {
+          pixelLastMove[pi] = ts;
+        }
+      }
+      prevPixelLum[pi] = lum;
+
+      // Apply contrast for ASCII mapping
+      let lumC = ((lum / 255 - 0.5) * contrastVal + 0.5) * 255;
+      lumC = Math.max(0, Math.min(255, lumC));
+      let idx = Math.floor((lumC / 255) * clen);
       if (!inverted) idx = clen - idx;
-      line += charset[idx];
+
+      if (motionOnlyMode && (ts - pixelLastMove[pi] > ASCII_LINGER_MS)) {
+        line += ' ';
+      } else {
+        line += charset[idx];
+      }
     }
     lines.push(line);
   }
+  pixelMotionInitialized = true;
 
   output.textContent = lines.join('\n');
 
