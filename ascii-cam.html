@@ -86,7 +86,7 @@
     align-items: center;
     gap: 16px;
     padding-top: 60px;
-    padding-bottom: 70px;
+    padding-bottom: 105px;
     width: 100%;
   }
 
@@ -143,13 +143,33 @@
     position: fixed;
     bottom: 0; left: 0; right: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 16px;
-    padding: 12px 20px;
+    gap: 8px;
+    padding: 10px 20px;
     border-top: 1px solid var(--border);
     background: var(--bg);
     z-index: 10;
+  }
+
+  #preset-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .preset-chip {
+    font-size: 10px;
+    padding: 4px 12px;
+    letter-spacing: 0.18em;
   }
 
   button {
@@ -234,20 +254,38 @@
 </main>
 
 <footer>
-  <button id="start-btn">▶ START</button>
-  <button id="invert-btn">INVERT</button>
-  <button id="blend-btn">NORMAL</button>
-  <button id="motion-only-btn" class="active">MOTION ONLY</button>
-  <label>RES <input type="range" id="res-slider" min="40" max="140" value="90" step="5"></label>
-  <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.75" step="0.1"></label>
-  <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="1" step="0.01"></label>
-  <span id="overlay-pct">100%</span>
+  <div id="preset-chips">
+    <button class="preset-chip active" data-preset="0">DEFAULT</button>
+    <button class="preset-chip" data-preset="1">CINEMATIC</button>
+    <button class="preset-chip" data-preset="2">GLITCH</button>
+    <button class="preset-chip" data-preset="3">SOFT</button>
+    <button class="preset-chip" data-preset="4">MONO</button>
+  </div>
+  <div class="controls-row">
+    <button id="start-btn">▶ START</button>
+    <button id="invert-btn">INVERT</button>
+    <button id="blend-btn">NORMAL</button>
+    <button id="motion-only-btn" class="active">MOTION ONLY</button>
+    <label>RES <input type="range" id="res-slider" min="40" max="140" value="90" step="5"></label>
+    <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.75" step="0.1"></label>
+    <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="1" step="0.01"></label>
+    <span id="overlay-pct">100%</span>
+  </div>
 </footer>
 
 <script>
 // Static config
 const CHARSET_DENSE  = '$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,"^`\'. ';
 const BLEND_MODES = ['screen', 'lighten', 'hard-light', 'overlay', 'normal'];
+
+// Read-only presets  (subset of state keys — 'running' intentionally excluded)
+const PRESETS = [
+  { name: 'DEFAULT',   inverted: false, cols: 90,  contrast: 1.75, overlayOpacity: 1.0, blendIndex: 4, motionOnly: true  },
+  { name: 'CINEMATIC', inverted: false, cols: 80,  contrast: 2.5,  overlayOpacity: 0.5, blendIndex: 0, motionOnly: false },
+  { name: 'GLITCH',    inverted: false, cols: 120, contrast: 2.2,  overlayOpacity: 0.7, blendIndex: 2, motionOnly: true  },
+  { name: 'SOFT',      inverted: false, cols: 65,  contrast: 1.2,  overlayOpacity: 0.5, blendIndex: 1, motionOnly: false },
+  { name: 'MONO',      inverted: true,  cols: 90,  contrast: 2.0,  overlayOpacity: 0.0, blendIndex: 4, motionOnly: false },
+];
 
 // Motion detection config (markers)
 const GRID_COLS = 16;
@@ -261,6 +299,9 @@ const MATCH_DIST = 0.15;
 // Motion-only ASCII config
 const PIXEL_MOTION_THRESHOLD = 25;
 const ASCII_LINGER_MS = 400;
+
+// Tracks which preset chip is active (-1 = custom / manual)
+let activePresetIndex = 0;
 
 // User-facing settings (a single source of truth — savable / presetable)
 const state = {
@@ -293,6 +334,7 @@ const els = {
   resSlider:      document.getElementById('res-slider'),
   contrastSlider: document.getElementById('contrast-slider'),
   overlaySlider:  document.getElementById('overlay-slider'),
+  presetChips:    document.querySelectorAll('.preset-chip'),
 };
 
 const ctx       = els.canvas.getContext('2d', { willReadFrequently: true });
@@ -323,34 +365,57 @@ function applyState() {
   els.resSlider.value = state.cols;
   els.contrastSlider.value = state.contrast;
   els.overlaySlider.value = state.overlayOpacity;
+  // Sync preset chip highlight
+  els.presetChips.forEach((chip, i) => {
+    chip.classList.toggle('active', i === activePresetIndex);
+  });
 }
 
 els.startBtn.addEventListener('click', toggleCamera);
 
+// Preset chip selection
+document.getElementById('preset-chips').addEventListener('click', e => {
+  const chip = e.target.closest('.preset-chip');
+  if (!chip) return;
+  const idx = parseInt(chip.dataset.preset, 10);
+  if (isNaN(idx) || !PRESETS[idx]) return;
+  activePresetIndex = idx;
+  const { name: _name, ...values } = PRESETS[idx];
+  Object.assign(state, values);
+  applyState();
+});
+
 els.invertBtn.addEventListener('click', () => {
+  activePresetIndex = -1;
   state.inverted = !state.inverted;
   applyState();
 });
 
 els.motionOnlyBtn.addEventListener('click', () => {
+  activePresetIndex = -1;
   state.motionOnly = !state.motionOnly;
   applyState();
 });
 
 els.blendBtn.addEventListener('click', () => {
+  activePresetIndex = -1;
   state.blendIndex = (state.blendIndex + 1) % BLEND_MODES.length;
   applyState();
 });
 
 els.resSlider.addEventListener('input', e => {
+  activePresetIndex = -1;
   state.cols = parseInt(e.target.value);
+  applyState();
 });
 
 els.contrastSlider.addEventListener('input', e => {
+  activePresetIndex = -1;
   state.contrast = parseFloat(e.target.value);
 });
 
 els.overlaySlider.addEventListener('input', e => {
+  activePresetIndex = -1;
   state.overlayOpacity = parseFloat(e.target.value);
   applyState();
 });
