@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  // Single-page static site; defaults are fine.
-  // Cloudflare Pages serves `dist/` as-is.
+  plugins: [tailwindcss()],
 });

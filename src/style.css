@@ -1,259 +1,331 @@
+@import "tailwindcss";
+@import "@jumpu-ui/tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────
+ * ascii-cam tokens
+ * Override Jumpu UI / Tailwind v4 design tokens via :root cascade so
+ * jumpu-* component classes inherit the lime-on-black terminal palette
+ * and square corners. Local --bg/--fg/--dim/--ui/--border live alongside
+ * the framework tokens for non-component custom CSS below.
+ * ───────────────────────────────────────────────────────────────────── */
+:root {
+  /* Jumpu UI primary → lime */
+  --color-primary-50:  rgba(200, 255, 0, 0.05);
+  --color-primary-100: rgba(200, 255, 0, 0.10);
+  --color-primary-200: rgba(200, 255, 0, 0.20);
+  --color-primary-300: rgba(200, 255, 0, 0.35);
+  --color-primary-500: #c8ff00;
+  --color-primary-600: #c8ff00;
+  --color-primary-700: #c8ff00;
+  --color-primary-800: #aae600;
+  --color-primary-900: #88c000;
+
+  /* Square corners across all radii */
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+
+  /* ascii-cam local palette */
+  --bg: #0a0a0a;
+  --fg: #c8ff00;
+  --dim: #3a4a00;
+  --ui: #1a1a1a;
+  --border: #2a2a2a;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  :root {
-    --bg: #0a0a0a;
-    --fg: #c8ff00;
-    --dim: #3a4a00;
-    --ui: #1a1a1a;
-    --border: #2a2a2a;
-  }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Share Tech Mono', monospace;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
 
-  body {
-    background: var(--bg);
-    color: var(--fg);
-    font-family: 'Share Tech Mono', monospace;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-  }
+/* CRT scanline overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.18) 2px,
+    rgba(0, 0, 0, 0.18) 4px
+  );
+  pointer-events: none;
+  z-index: 100;
+}
 
-  /* CRT scanline overlay */
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background: repeating-linear-gradient(
-      to bottom,
-      transparent 0px,
-      transparent 2px,
-      rgba(0,0,0,0.18) 2px,
-      rgba(0,0,0,0.18) 4px
-    );
-    pointer-events: none;
-    z-index: 100;
-  }
+/* ─────────────────────────────────────────────────────────────────────
+ * Header (status / FPS)
+ * ───────────────────────────────────────────────────────────────────── */
+header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  z-index: 10;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  color: var(--dim);
+}
+header .logo { color: var(--fg); font-size: 14px; letter-spacing: 0.3em; }
 
-  header {
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 20px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
-    z-index: 10;
-    font-size: 11px;
-    letter-spacing: 0.15em;
-    color: var(--dim);
-  }
+#status { display: flex; align-items: center; gap: 6px; }
+#dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #444;
+  transition: background 0.3s;
+}
+#dot.live {
+  background: var(--fg);
+  box-shadow: 0 0 6px var(--fg);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
 
-  header .logo {
-    color: var(--fg);
-    font-size: 14px;
-    letter-spacing: 0.3em;
-  }
+#meta-display { display: inline-flex; align-items: center; gap: 6px; }
+#meta-display .sep { opacity: 0.5; }
 
-  #status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
+/* ─────────────────────────────────────────────────────────────────────
+ * Main / Stage layer stack
+ * (z-index: ascii-output 2 < motion-overlay 3, video-overlay 1 underneath)
+ * ───────────────────────────────────────────────────────────────────── */
+main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding-top: 60px;
+  padding-bottom: 105px;
+  width: 100%;
+}
 
-  #dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: #444;
-    transition: background 0.3s;
-  }
-  #dot.live { background: var(--fg); box-shadow: 0 0 6px var(--fg); animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:0.4 } }
+#stage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
 
-  main {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    padding-top: 60px;
-    padding-bottom: 105px;
-    width: 100%;
-  }
+#ascii-output {
+  position: relative;
+  z-index: 2;
+  line-height: 1.15;
+  letter-spacing: 0.07em;
+  font-size: 16px;
+  color: var(--fg);
+  white-space: pre;
+  text-shadow: 0 0 4px rgba(200, 255, 0, 0.35);
+  mix-blend-mode: normal;
+  display: block;
+  user-select: none;
+}
 
-  /* Stacking layer */
-  #stage {
-    position: relative;
-    display: inline-block;
-    line-height: 0;
-    border: 1px solid var(--border);
-    overflow: hidden;
-  }
+#motion-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
 
-  #ascii-output {
-    position: relative;
-    z-index: 2;
-    line-height: 1.15;
-    letter-spacing: 0.07em;
-    font-size: 16px;
-    color: var(--fg);
-    white-space: pre;
-    text-shadow: 0 0 4px rgba(200,255,0,0.35);
-    padding: 0;
-    mix-blend-mode: normal;
-    display: block;
-    user-select: none;
-  }
+#video-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: fill; /* ASCII と同じ縦横比に引き伸ばして完全一致 */
+  opacity: 1;
+  transform: scaleX(-1); /* 鏡像を ASCII に合わせる */
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
 
-  #motion-overlay {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 3;
-    pointer-events: none;
-  }
+/* hidden processing elements */
+#video, #canvas { display: none; }
 
-  #video-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    width: 100%;
-    height: 100%;
-    object-fit: fill; /* ASCIIと同じ縦横比に引き伸ばして完全一致 */
-    opacity: 1;
-    transform: scaleX(-1); /* 鏡像をASCIIに合わせる */
-    pointer-events: none;
-    transition: opacity 0.1s;
-  }
+/* ─────────────────────────────────────────────────────────────────────
+ * Footer (preset chips + control row)
+ * ───────────────────────────────────────────────────────────────────── */
+footer {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  z-index: 10;
+}
 
-  /* hidden processing elements */
-  #video, #canvas { display: none; }
+#preset-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
-  footer {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 20px;
-    border-top: 1px solid var(--border);
-    background: var(--bg);
-    z-index: 10;
-  }
+.controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
 
-  #preset-chips {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
+/* ─────────────────────────────────────────────────────────────────────
+ * Buttons — extend Jumpu UI (jumpu-outlined-button) with terminal type
+ *
+ * Jumpu UI provides the structural styling (focus, transitions, hover
+ * brightness). We layer on Share Tech Mono, uppercase, letter-spacing
+ * for the cyberpunk identity. .active is our state class for toggles.
+ * ───────────────────────────────────────────────────────────────────── */
+.jumpu-outlined-button {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 7px 18px;
+  background-color: var(--ui);
+  border-color: var(--border);
+  color: var(--dim);
+}
+.jumpu-outlined-button:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+  background-color: rgba(200, 255, 0, 0.06);
+}
+.jumpu-outlined-button.active {
+  border-color: var(--fg);
+  color: var(--fg);
+  background-color: rgba(200, 255, 0, 0.10);
+}
 
-  .controls-row {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    flex-wrap: wrap;
-  }
+#start-btn {
+  font-size: 13px;
+  padding: 10px 32px;
+  border-color: var(--fg);
+  color: var(--fg);
+  background-color: rgba(200, 255, 0, 0.08);
+}
+#start-btn:hover { background-color: rgba(200, 255, 0, 0.15); }
 
-  .preset-chip {
-    font-size: 10px;
-    padding: 4px 12px;
-    letter-spacing: 0.18em;
-    position: relative;
-  }
-  .preset-chip.user {
-    border-style: dashed;
-    padding-right: 22px;
-  }
-  .preset-chip .chip-delete {
-    position: absolute;
-    top: 50%;
-    right: 5px;
-    transform: translateY(-50%);
-    width: 13px;
-    height: 13px;
-    line-height: 11px;
-    text-align: center;
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    background: var(--bg);
-    color: var(--dim);
-    font-size: 10px;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.15s, color 0.15s, border-color 0.15s;
-  }
-  .preset-chip:hover .chip-delete { opacity: 1; }
-  .preset-chip .chip-delete:hover {
-    color: var(--fg);
-    border-color: var(--fg);
-  }
-  #save-preset-btn {
-    font-size: 10px;
-    padding: 4px 10px;
-    letter-spacing: 0.18em;
-  }
-  .chip-divider {
-    width: 1px;
-    height: 14px;
-    background: var(--border);
-    margin: 0 4px;
-  }
+/* ─────────────────────────────────────────────────────────────────────
+ * Preset chips — built on jumpu-tag (interactive label)
+ * ───────────────────────────────────────────────────────────────────── */
+.preset-chip.jumpu-tag {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  background-color: var(--ui);
+  border: 1px solid var(--border);
+  color: var(--dim);
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s;
+}
+.preset-chip.jumpu-tag:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+  background-color: rgba(200, 255, 0, 0.06);
+}
+.preset-chip.jumpu-tag.active {
+  border-color: var(--fg);
+  color: var(--fg);
+  background-color: rgba(200, 255, 0, 0.10);
+}
+.preset-chip.user {
+  border-style: dashed;
+  padding-right: 22px;
+}
+.preset-chip .chip-delete {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  width: 13px;
+  height: 13px;
+  line-height: 11px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--dim);
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.preset-chip:hover .chip-delete { opacity: 1; }
+.preset-chip .chip-delete:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
 
-  button {
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 11px;
-    letter-spacing: 0.2em;
-    padding: 7px 18px;
-    border: 1px solid var(--border);
-    background: var(--ui);
-    color: var(--dim);
-    cursor: pointer;
-    transition: all 0.15s;
-    text-transform: uppercase;
-  }
-  button:hover { border-color: var(--fg); color: var(--fg); background: rgba(200,255,0,0.06); }
-  button.active { border-color: var(--fg); color: var(--fg); background: rgba(200,255,0,0.1); }
+/* SAVE button — built on jumpu-text-button (secondary-action style) */
+#save-preset-btn.jumpu-text-button {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  color: var(--dim);
+}
+#save-preset-btn.jumpu-text-button:hover { color: var(--fg); }
 
-  label {
-    font-size: 10px;
-    letter-spacing: 0.15em;
-    color: var(--dim);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
+.chip-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  margin: 0 4px;
+}
 
-  input[type=range] {
-    -webkit-appearance: none;
-    width: 80px;
-    height: 3px;
-    background: var(--border);
-    outline: none;
-    cursor: pointer;
-  }
-  input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 12px; height: 12px;
-    border-radius: 50%;
-    background: var(--fg);
-    box-shadow: 0 0 4px var(--fg);
-  }
+/* ─────────────────────────────────────────────────────────────────────
+ * Sliders + labels (no Jumpu UI slider component exists)
+ * ───────────────────────────────────────────────────────────────────── */
+label {
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+label.overlay-label { color: var(--fg); }
 
-  #start-btn {
-    border-color: var(--fg);
-    color: var(--fg);
-    background: rgba(200,255,0,0.08);
-    font-size: 13px;
-    padding: 10px 32px;
-  }
-  #start-btn:hover { background: rgba(200,255,0,0.15); }
-
-  /* overlay opacity label highlight */
-  label.overlay-label { color: var(--fg); }
-
-  #meta-display { display: inline-flex; align-items: center; gap: 6px; }
-  #meta-display .sep { opacity: 0.5; }
+input[type=range] {
+  -webkit-appearance: none;
+  width: 80px;
+  height: 3px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--fg);
+  box-shadow: 0 0 4px var(--fg);
+}

@@ -120,11 +120,11 @@ function renderPresetChips(): void {
   const bar = els.presetChipsBar;
   bar.innerHTML = '';
 
-  // Built-in chips
+  // Built-in chips (jumpu-tag = interactive label component)
   PRESETS.forEach((p, i) => {
     const id = 'builtin-' + i;
     const btn = document.createElement('button');
-    btn.className = 'preset-chip';
+    btn.className = 'preset-chip jumpu-tag';
     btn.dataset.presetId = id;
     btn.textContent = p.name;
     if (id === activePresetId) btn.classList.add('active');
@@ -141,7 +141,7 @@ function renderPresetChips(): void {
   // User chips
   userPresets.forEach(p => {
     const btn = document.createElement('button');
-    btn.className = 'preset-chip user';
+    btn.className = 'preset-chip jumpu-tag user';
     btn.dataset.presetId = p.id;
     btn.textContent = p.name;
     if (p.id === activePresetId) btn.classList.add('active');
@@ -154,9 +154,10 @@ function renderPresetChips(): void {
     bar.appendChild(btn);
   });
 
-  // SAVE button
+  // SAVE button (jumpu-text-button = secondary action / link-like)
   const save = document.createElement('button');
   save.id = 'save-preset-btn';
+  save.className = 'jumpu-text-button';
   save.textContent = '+ SAVE';
   save.title = 'Save current settings as a preset';
   bar.appendChild(save);
