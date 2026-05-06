@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ASCII CAM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<header>
+  <span class="logo">ASCII CAM</span>
+  <div id="status">
+    <div id="dot"></div>
+    <span id="status-text">STANDBY</span>
+  </div>
+  <span id="meta-display">
+    <span id="res-display">--</span>
+    <span class="sep">·</span>
+    <span id="fps-display">-- FPS</span>
+  </span>
+</header>
+
+<main>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+  <div id="stage">
+    <div id="ascii-output">[ PRESS START TO INITIALIZE CAMERA ]</div>
+    <canvas id="motion-overlay"></canvas>
+    <video id="video-overlay" autoplay playsinline muted></video>
+  </div>
+</main>
+
+<footer>
+  <div id="preset-chips"><!-- chips rendered by renderPresetChips() --></div>
+  <div class="controls-row">
+    <button id="start-btn">▶ START</button>
+    <button id="invert-btn">INVERT</button>
+    <button id="blend-btn">NORMAL</button>
+    <button id="motion-only-btn" class="active">MOTION ONLY</button>
+    <label>RES <input type="range" id="res-slider" min="40" max="140" value="90" step="5"></label>
+    <label>CONTRAST <input type="range" id="contrast-slider" min="0.5" max="3" value="1.75" step="0.1"></label>
+    <label class="overlay-label">OVERLAY <input type="range" id="overlay-slider" min="0" max="1" value="1" step="0.01"></label>
+    <span id="overlay-pct">100%</span>
+  </div>
+</footer>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

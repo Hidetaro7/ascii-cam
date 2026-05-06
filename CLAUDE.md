@@ -1,12 +1,14 @@
 # ascii-cam
 
-リアルタイムでWebカメラ映像をASCIIアート化するシングルファイルデモ。
+リアルタイムでWebカメラ映像をASCIIアート化する Web デモ。
 自分や猫の動きに合わせてASCIIが変化するインタラクティブ体験を目的としている。
 
 ## アーキテクチャ
 
-- **シングルHTML構成**（`ascii-cam.html`）— ビルド不要、`open ascii-cam.html` で即動作
-- フレームワーク・依存パッケージなし、Vanilla JS のみ
+- **Vite + TypeScript 構成**（緩い `strict: false` 運用、段階的に厳しくしていく）
+- 開発: `npm run dev` / 本番ビルド: `npm run build` → `dist/` を Cloudflare Pages 等へ
+- ファイル: `index.html` + `src/main.ts` + `src/style.css`（M1 時点では1ファイルにまとめてある）
+- Phase 2（将来）で SolidJS 導入を検討中。エンジン層と UI 層をファイル分離する M2 で布石を打つ
 - Google Fonts（Share Tech Mono）のみ外部参照
 
 ## 描画の仕組み
