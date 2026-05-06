@@ -170,6 +170,45 @@
     font-size: 10px;
     padding: 4px 12px;
     letter-spacing: 0.18em;
+    position: relative;
+  }
+  .preset-chip.user {
+    border-style: dashed;
+    padding-right: 22px;
+  }
+  .preset-chip .chip-delete {
+    position: absolute;
+    top: 50%;
+    right: 5px;
+    transform: translateY(-50%);
+    width: 13px;
+    height: 13px;
+    line-height: 11px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--dim);
+    font-size: 10px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .preset-chip:hover .chip-delete { opacity: 1; }
+  .preset-chip .chip-delete:hover {
+    color: var(--fg);
+    border-color: var(--fg);
+  }
+  #save-preset-btn {
+    font-size: 10px;
+    padding: 4px 10px;
+    letter-spacing: 0.18em;
+  }
+  .chip-divider {
+    width: 1px;
+    height: 14px;
+    background: var(--border);
+    margin: 0 4px;
   }
 
   button {
@@ -254,13 +293,7 @@
 </main>
 
 <footer>
-  <div id="preset-chips">
-    <button class="preset-chip active" data-preset="0">DEFAULT</button>
-    <button class="preset-chip" data-preset="1">CINEMATIC</button>
-    <button class="preset-chip" data-preset="2">GLITCH</button>
-    <button class="preset-chip" data-preset="3">SOFT</button>
-    <button class="preset-chip" data-preset="4">MONO</button>
-  </div>
+  <div id="preset-chips"><!-- chips rendered by renderPresetChips() --></div>
   <div class="controls-row">
     <button id="start-btn">▶ START</button>
     <button id="invert-btn">INVERT</button>
@@ -300,8 +333,38 @@ const MATCH_DIST = 0.15;
 const PIXEL_MOTION_THRESHOLD = 25;
 const ASCII_LINGER_MS = 400;
 
-// Tracks which preset chip is active (-1 = custom / manual)
-let activePresetIndex = 0;
+// Tracks the active preset chip's id ('' = custom / manual)
+// IDs: 'builtin-0'..'builtin-N' for PRESETS, 'user-<timestamp>' for saved
+let activePresetId = 'builtin-0';
+
+// localStorage schema (versioned for future-proofing)
+const STORAGE_KEY = 'ascii-cam:userPresets';
+const STORAGE_VERSION = 1;
+let userPresets = []; // { id, name, values }
+
+function loadUserPresets() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== STORAGE_VERSION || !Array.isArray(parsed.presets)) return [];
+    return parsed.presets;
+  } catch (e) {
+    console.warn('Failed to load user presets:', e);
+    return [];
+  }
+}
+
+function saveUserPresets() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: STORAGE_VERSION,
+      presets: userPresets,
+    }));
+  } catch (e) {
+    console.warn('Failed to save user presets:', e);
+  }
+}
 
 // User-facing settings (a single source of truth — savable / presetable)
 const state = {
@@ -334,7 +397,7 @@ const els = {
   resSlider:      document.getElementById('res-slider'),
   contrastSlider: document.getElementById('contrast-slider'),
   overlaySlider:  document.getElementById('overlay-slider'),
-  presetChips:    document.querySelectorAll('.preset-chip'),
+  presetChipsBar: document.getElementById('preset-chips'),
 };
 
 const ctx       = els.canvas.getContext('2d', { willReadFrequently: true });
@@ -366,56 +429,164 @@ function applyState() {
   els.contrastSlider.value = state.contrast;
   els.overlaySlider.value = state.overlayOpacity;
   // Sync preset chip highlight
-  els.presetChips.forEach((chip, i) => {
-    chip.classList.toggle('active', i === activePresetIndex);
+  els.presetChipsBar.querySelectorAll('.preset-chip').forEach(chip => {
+    chip.classList.toggle('active', chip.dataset.presetId === activePresetId);
   });
+}
+
+// Extract savable values from current state (excludes 'running')
+function snapshotPresetValues() {
+  return {
+    inverted:       state.inverted,
+    cols:           state.cols,
+    contrast:       state.contrast,
+    overlayOpacity: state.overlayOpacity,
+    blendIndex:     state.blendIndex,
+    motionOnly:     state.motionOnly,
+  };
+}
+
+function findPresetById(id) {
+  if (id.startsWith('builtin-')) {
+    const i = parseInt(id.slice('builtin-'.length), 10);
+    return PRESETS[i] ? { name: PRESETS[i].name, values: PRESETS[i] } : null;
+  }
+  if (id.startsWith('user-')) {
+    return userPresets.find(p => p.id === id) || null;
+  }
+  return null;
+}
+
+function applyPresetById(id) {
+  const p = findPresetById(id);
+  if (!p) return;
+  activePresetId = id;
+  // Strip 'name' if present (only built-ins have it inline)
+  const { name: _name, ...values } = p.values;
+  Object.assign(state, values);
+  applyState();
+}
+
+function renderPresetChips() {
+  const bar = els.presetChipsBar;
+  bar.innerHTML = '';
+
+  // Built-in chips
+  PRESETS.forEach((p, i) => {
+    const id = 'builtin-' + i;
+    const btn = document.createElement('button');
+    btn.className = 'preset-chip';
+    btn.dataset.presetId = id;
+    btn.textContent = p.name;
+    if (id === activePresetId) btn.classList.add('active');
+    bar.appendChild(btn);
+  });
+
+  // Divider only when user presets exist
+  if (userPresets.length > 0) {
+    const div = document.createElement('span');
+    div.className = 'chip-divider';
+    bar.appendChild(div);
+  }
+
+  // User chips
+  userPresets.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'preset-chip user';
+    btn.dataset.presetId = p.id;
+    btn.textContent = p.name;
+    if (p.id === activePresetId) btn.classList.add('active');
+    const del = document.createElement('span');
+    del.className = 'chip-delete';
+    del.dataset.deleteId = p.id;
+    del.textContent = '×';
+    del.title = 'Delete preset';
+    btn.appendChild(del);
+    bar.appendChild(btn);
+  });
+
+  // SAVE button
+  const save = document.createElement('button');
+  save.id = 'save-preset-btn';
+  save.textContent = '+ SAVE';
+  save.title = 'Save current settings as a preset';
+  bar.appendChild(save);
 }
 
 els.startBtn.addEventListener('click', toggleCamera);
 
-// Preset chip selection
-document.getElementById('preset-chips').addEventListener('click', e => {
+// Preset bar: handles chip click, × delete, and + SAVE button
+els.presetChipsBar.addEventListener('click', e => {
+  // Delete user preset
+  const delBtn = e.target.closest('.chip-delete');
+  if (delBtn) {
+    e.stopPropagation();
+    const id = delBtn.dataset.deleteId;
+    const p = userPresets.find(x => x.id === id);
+    if (!p) return;
+    if (!confirm(`Delete preset "${p.name}"?`)) return;
+    userPresets = userPresets.filter(x => x.id !== id);
+    saveUserPresets();
+    if (activePresetId === id) activePresetId = '';
+    renderPresetChips();
+    applyState();
+    return;
+  }
+
+  // Save current as new user preset
+  if (e.target.closest('#save-preset-btn')) {
+    const name = (prompt('Preset name?') || '').trim();
+    if (!name) return;
+    const newPreset = {
+      id: 'user-' + Date.now(),
+      name,
+      values: snapshotPresetValues(),
+    };
+    userPresets.push(newPreset);
+    saveUserPresets();
+    activePresetId = newPreset.id;
+    renderPresetChips();
+    applyState();
+    return;
+  }
+
+  // Apply preset
   const chip = e.target.closest('.preset-chip');
-  if (!chip) return;
-  const idx = parseInt(chip.dataset.preset, 10);
-  if (isNaN(idx) || !PRESETS[idx]) return;
-  activePresetIndex = idx;
-  const { name: _name, ...values } = PRESETS[idx];
-  Object.assign(state, values);
-  applyState();
+  if (!chip || !chip.dataset.presetId) return;
+  applyPresetById(chip.dataset.presetId);
 });
 
 els.invertBtn.addEventListener('click', () => {
-  activePresetIndex = -1;
+  activePresetId = '';
   state.inverted = !state.inverted;
   applyState();
 });
 
 els.motionOnlyBtn.addEventListener('click', () => {
-  activePresetIndex = -1;
+  activePresetId = '';
   state.motionOnly = !state.motionOnly;
   applyState();
 });
 
 els.blendBtn.addEventListener('click', () => {
-  activePresetIndex = -1;
+  activePresetId = '';
   state.blendIndex = (state.blendIndex + 1) % BLEND_MODES.length;
   applyState();
 });
 
 els.resSlider.addEventListener('input', e => {
-  activePresetIndex = -1;
+  activePresetId = '';
   state.cols = parseInt(e.target.value);
   applyState();
 });
 
 els.contrastSlider.addEventListener('input', e => {
-  activePresetIndex = -1;
+  activePresetId = '';
   state.contrast = parseFloat(e.target.value);
 });
 
 els.overlaySlider.addEventListener('input', e => {
-  activePresetIndex = -1;
+  activePresetId = '';
   state.overlayOpacity = parseFloat(e.target.value);
   applyState();
 });
@@ -742,7 +913,9 @@ function drawMotionMarkers(ts) {
   }
 }
 
-// Sync UI to initial state on page load
+// Boot: load saved user presets, build chip row, sync UI
+userPresets = loadUserPresets();
+renderPresetChips();
 applyState();
 </script>
 </body>
